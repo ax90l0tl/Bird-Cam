@@ -11,7 +11,7 @@
 ```nmcli connection show```
 
 4. See current config
-```nmcli connection show "<name>" | grep ipv4
+```nmcli connection show "<name>" | grep ipv4```
 
 5. Set static IP
 ``` sudo nmcli connection modify "<name>" 
