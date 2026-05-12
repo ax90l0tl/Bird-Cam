@@ -1,4 +1,4 @@
-
+# SETUP
 # Set static IP
 
 1. Get IP address
@@ -26,3 +26,8 @@ ipv4.method manual```
 7. Restart
 ``` sudo nmcli connection up "<name>"
 
+# View Stream
+`http://<IP>:8889/cam`
+
+# View Recordings
+`http://<IP>:9996/list?path=cam
