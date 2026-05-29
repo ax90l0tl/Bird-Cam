@@ -26,6 +26,12 @@ ipv4.method manual```
 7. Restart
 ``` sudo nmcli connection up "<name>"
 
+8. Enable Camera in `/boot/firmware/config.txt`
+```dtoverlay=imx219```
+
+9. Build
+```gcc -Wall -pthread -o main main.c -lpigpiod_if2 -lcurl -lrt```
+
 # View Stream
 `http://<IP>:8889/cam`
 
