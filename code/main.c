@@ -2,12 +2,16 @@
 #include <pigpiod_if2.h>
 #include <curl/curl.h>
 #include <signal.h>
+#include <math.h>
+#include <time.h>
 
 #define SENSOR_PIN 23
 #define API_ENDPOINT "http://localhost:9997/v3/config/paths/patch/cam"
 
 static volatile int keepRunning = 1;
-
+uint32_t last_motion_tick = 0;
+time_t now;
+struct tm *tm;
 void start_recording(uint8_t state)
 {
     CURL *curl = curl_easy_init();
@@ -32,7 +36,8 @@ void start_recording(uint8_t state)
 int verify_route()
 {
     CURL *curl = curl_easy_init();
-    if (!curl) return 0;
+    if (!curl)
+        return 0;
 
     curl_easy_setopt(curl, CURLOPT_URL, "http://localhost:9997/v3/config/global/get");
     curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
@@ -45,7 +50,9 @@ int verify_route()
 }
 void detected_motion(int pi, unsigned user_gpio, unsigned level, uint32_t tick)
 {
-    printf("GPIO %u level=%u\n", user_gpio, level);
+    printf("GPIO %u level=%u tick=%.2f\n", user_gpio, level, pow(10, -6) * (float)(tick - last_motion_tick));
+    last_motion_tick = tick;
+    start_recording(1);
 }
 
 void handle_sigint(int sig)
@@ -66,20 +73,38 @@ int main()
     }
     printf("%i\n", set_mode(pi, SENSOR_PIN, PI_INPUT));
     printf("%i\n", set_pull_up_down(pi, SENSOR_PIN, PI_PUD_DOWN));
+    printf("Calibrating sensor...\n");
+    time_sleep(15.0);
 
     if (!verify_route())
     {
         fprintf(stderr, "Can't reach Mediamtx server\n");
         return 1;
     }
-    // int cb_id = callback(pi, RISING_EDGE, SENSOR_PIN, detected_motion);
-    start_recording(1);
+
+    int cb_id = callback(pi, SENSOR_PIN, RISING_EDGE, detected_motion);
+
+    if (cb_id < 0)
+    {
+        fprintf(stderr, "callback failed: %d\n", cb_id);
+        pigpio_stop(pi);
+        return 1;
+    }
+    // start_recording(1);
     while (keepRunning)
     {
-        printf("GPIO %u level=%u\n", SENSOR_PIN, gpio_read(pi, SENSOR_PIN));
-        time_sleep(0.1);
+        // printf("GPIO %u level=%u\n", SENSOR_PIN, gpio_read(pi, SENSOR_PIN));
+        time(&now);
+        tm = localtime(&now);
+        printf("Current time: %02d:%02d:%02d\n", tm->tm_hour, tm->tm_min, tm->tm_sec);
+        if (tm->tm_hour >= 17)
+        {
+            keepRunning = 0;
+            break;
+        }
+        time_sleep(60.0);
     }
-    // callback_cancel(cb_id);
+    callback_cancel(cb_id);
     printf("Stopping recording...\n");
     start_recording(0);
     curl_global_cleanup();
