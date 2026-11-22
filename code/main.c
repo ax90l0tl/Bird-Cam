@@ -10,6 +10,8 @@
 
 static volatile int keepRunning = 1;
 uint32_t last_motion_tick = 0;
+static volatile int recording = 0;
+static time_t record_until = 0;
 time_t now;
 struct tm *tm;
 void start_recording(uint8_t state)
@@ -26,7 +28,9 @@ void start_recording(uint8_t state)
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
 
-    curl_easy_perform(curl);
+    CURLcode res = curl_easy_perform(curl);
+    if (res != CURLE_OK)
+        fprintf(stderr, "curl failed: %s\n", curl_easy_strerror(res));
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
@@ -52,7 +56,12 @@ void detected_motion(int pi, unsigned user_gpio, unsigned level, uint32_t tick)
 {
     printf("GPIO %u level=%u tick=%.2f\n", user_gpio, level, pow(10, -6) * (float)(tick - last_motion_tick));
     last_motion_tick = tick;
-    start_recording(1);
+    if (!recording)
+    {
+        start_recording(1);
+        recording = 1;
+        record_until = time(NULL) + 60;
+    }
 }
 
 void handle_sigint(int sig)
@@ -62,24 +71,28 @@ void handle_sigint(int sig)
 
 int main()
 {
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
     signal(SIGINT, handle_sigint);
+    signal(SIGTERM, handle_sigint);
     curl_global_init(CURL_GLOBAL_ALL);
     int pi = pigpio_start(NULL, NULL);
     printf("%i\n", pi);
-    if (pi < 0)
+    while (pi < 0)
     {
+        pi = pigpio_start(NULL, NULL);
+        time_sleep(2.0);
         fprintf(stderr, "pigpio init failed\n");
-        return 1;
     }
     printf("%i\n", set_mode(pi, SENSOR_PIN, PI_INPUT));
     printf("%i\n", set_pull_up_down(pi, SENSOR_PIN, PI_PUD_DOWN));
     printf("Calibrating sensor...\n");
     time_sleep(15.0);
 
-    if (!verify_route())
+    while (!verify_route())
     {
+        time_sleep(2.0);
         fprintf(stderr, "Can't reach Mediamtx server\n");
-        return 1;
     }
 
     int cb_id = callback(pi, SENSOR_PIN, RISING_EDGE, detected_motion);
@@ -90,19 +103,27 @@ int main()
         pigpio_stop(pi);
         return 1;
     }
-    // start_recording(1);
+
     while (keepRunning)
     {
         // printf("GPIO %u level=%u\n", SENSOR_PIN, gpio_read(pi, SENSOR_PIN));
-        time(&now);
-        tm = localtime(&now);
-        printf("Current time: %02d:%02d:%02d\n", tm->tm_hour, tm->tm_min, tm->tm_sec);
-        if (tm->tm_hour >= 17)
+        // time(&now);
+        // tm = localtime(&now);
+        // printf("Current time: %02d:%02d:%02d\n", tm->tm_hour, tm->tm_min, tm->tm_sec);
+        // if (tm->tm_hour >= 17)
+        // {
+        // keepRunning = 0;
+        // break;
+        // }
+        // time_sleep(1.0);
+        if (recording && time(NULL) >= record_until)
         {
-            keepRunning = 0;
-            break;
+            start_recording(0);
+            recording = 0;
+            printf("Recording stopped by timer\n");
+            fflush(stdout);
         }
-        time_sleep(60.0);
+        time_sleep(1.0);
     }
     callback_cancel(cb_id);
     printf("Stopping recording...\n");
